@@ -1,7 +1,8 @@
 /**
  * 服务端专用：通过 MetaChat 代理调用 Gemini API
- * 仅在 Vercel Serverless / Node 环境运行，API Key 不暴露给前端
+ * 放在 api/lib 下确保被 Vercel 打包进 serverless 函数
  */
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { GoogleGenAI } from "@google/genai";
 
 const METACHAT_BASE = process.env.METACHAT_BASE_URL || "https://llm-api.mmchat.xyz/gemini";
@@ -19,3 +20,8 @@ export const getAIClient = () => {
     },
   });
 };
+
+// 防止 /api/lib/gemini-server 被当作独立路由时返回无意义内容
+export default function handler(_req: VercelRequest, res: VercelResponse) {
+  res.status(404).end();
+}

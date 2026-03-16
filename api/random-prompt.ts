@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getAIClient } from "../lib/gemini-server";
+import { getAIClient } from "./lib/gemini-server";
 
 export const config = { maxDuration: 30 };
 
