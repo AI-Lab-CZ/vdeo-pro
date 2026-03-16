@@ -8,7 +8,7 @@ function getAIClient() {
     apiKey: key,
     httpOptions: {
       baseUrl: process.env.METACHAT_BASE_URL || "https://llm-api.mmchat.xyz/gemini",
-      apiVersion: "",
+      apiVersion: "v1beta",
     },
   });
 }
