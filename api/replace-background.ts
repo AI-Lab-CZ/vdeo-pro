@@ -151,6 +151,10 @@ PHOTOGRAPHY: Photorealistic, 8k, sharp focus on product.
     return res.status(200).json({ image: `data:image/png;base64,${part.inlineData.data}` });
   } catch (err: any) {
     console.error("replace-background error:", err);
-    return res.status(500).json({ error: err?.message || "生成失败" });
+    const msg = err?.message || "生成失败";
+    if (msg.includes("METACHAT_API_KEY")) {
+      return res.status(503).json({ error: "服务未配置 API Key，请联系管理员" });
+    }
+    return res.status(500).json({ error: msg });
   }
 }

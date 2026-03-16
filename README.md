@@ -23,9 +23,24 @@
 1. 注册 [Vercel](https://vercel.com) 并安装 [Vercel CLI](https://vercel.com/cli)
 2. 将代码推送到 GitHub（可私有仓库）
 3. 在 Vercel 中导入该仓库
-4. 在 **Settings → Environment Variables** 添加：
-   - `METACHAT_API_KEY`：你的 MetaChat API Key
+4. 在 **Settings → Environment Variables** 添加（必填）：
+   - 名称：`METACHAT_API_KEY`
+   - 值：你的 MetaChat API Key（从 MetaChat 控制台获取）
    - （可选）`METACHAT_BASE_URL`：默认 `https://llm-api.mmchat.xyz/gemini`
+   - 注意：变量名必须**完全一致**，否则 API 会报错
 5. 点击 Deploy，约 30 秒后获得可访问域名
 
 前端页面与 `/api` 后端均部署在同一域名下，国内可直接访问。
+
+## 故障排查
+
+**API 调用失败 / 500 错误：**
+
+1. 访问 `https://你的域名.vercel.app/api/health` 检查：
+   - `apiKeyConfigured: true` 表示已配置
+   - `apiKeyConfigured: false` 表示未配置或变量名错误
+
+2. 在 Vercel → 项目 → Settings → Environment Variables 确认：
+   - 变量名必须是 `METACHAT_API_KEY`（不是 GEMINI_API_KEY，除非你同时支持）
+   - 已勾选 Production / Preview / Development 环境
+   - 修改后需 **Redeploy** 才会生效

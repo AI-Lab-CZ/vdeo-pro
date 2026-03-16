@@ -24,6 +24,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ text });
   } catch (err: any) {
     console.error("chat error:", err);
-    return res.status(500).json({ error: err?.message || "对话失败" });
+    const msg = err?.message || "对话失败";
+    if (msg.includes("METACHAT_API_KEY")) {
+      return res.status(503).json({ error: "服务未配置 API Key，请联系管理员" });
+    }
+    return res.status(500).json({ error: msg });
   }
 }
