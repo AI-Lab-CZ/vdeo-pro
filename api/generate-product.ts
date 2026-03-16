@@ -1,7 +1,19 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getAIClient } from "./lib/gemini-server";
+import { GoogleGenAI } from "@google/genai";
 
 export const config = { maxDuration: 60 };
+
+function getAIClient() {
+  const key = process.env.METACHAT_API_KEY || process.env.GEMINI_API_KEY || "";
+  if (!key) throw new Error("未配置 METACHAT_API_KEY，请在 Vercel 环境变量中设置");
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: {
+      baseUrl: process.env.METACHAT_BASE_URL || "https://llm-api.mmchat.xyz/gemini",
+      apiVersion: "",
+    },
+  });
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
