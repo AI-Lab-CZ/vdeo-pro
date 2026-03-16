@@ -1,5 +1,6 @@
 
 export enum EnvironmentType {
+  AUTO_ADAPT = '智能适配 (推荐)',
   PAIFANG_STREET = '潮州牌坊街',
   BINJIANG_PROMENADE = '滨江长廊',
   PHOENIX_TIANCHI = '凤凰天池',
@@ -15,6 +16,7 @@ export enum EnvironmentType {
 }
 
 export enum SceneStyle {
+  AUTO_ADAPT = '智能适配 (推荐)',
   MODERN_LUXURY = '现代奢华',
   ZEN_MINIMALIST = '禅意极简',
   C4D_GEOMETRIC = 'C4D 3D渲染',
@@ -46,6 +48,8 @@ export interface GenerationConfig {
   size: ImageSize;
   addReference: boolean;
   cleanProduct: boolean;
+  addHuman: boolean;
+  selectedTasks: ImageTaskType[];
   mode: 'UPLOAD' | 'AI_GEN';
   productPrompt: string;
   plan: 'BASIC' | 'PRO_SET'; // BASIC = 2+1, PRO_SET = 6

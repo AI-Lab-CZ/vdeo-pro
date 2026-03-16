@@ -16,6 +16,8 @@ async function post<T>(path: string, body: object): Promise<T> {
 
 export const api = {
   randomPrompt: () => post<{ prompt: string }>("/api/random-prompt", {}),
+  recognizeProduct: (base64Image: string) =>
+    post<{ productName: string }>("/api/recognize-product", { base64Image }),
   generateProduct: (params: { productPrompt: string; size?: string; isPro?: boolean }) =>
     post<{ image: string }>("/api/generate-product", params),
   replaceBackground: (params: {
@@ -28,6 +30,7 @@ export const api = {
     size?: string;
     addReference?: boolean;
     cleanProduct?: boolean;
+    addHuman?: boolean;
   }) => post<{ image: string }>("/api/replace-background", params),
   chat: (message: string) => post<{ text: string }>("/api/chat", { message }),
 };

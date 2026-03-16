@@ -8,7 +8,6 @@ import {
   X, 
   ChevronRight,
   RefreshCw,
-  LayoutGrid,
   Box,
   Check,
   Zap,
@@ -24,12 +23,61 @@ import {
   Archive,
   Eye,
   Lock,
-  ShieldCheck
+  ShieldCheck,
+  Columns,
+  Loader2,
+  UserPlus,
+  MousePointer2
 } from 'lucide-react';
 import { SceneStyle, EnvironmentType, ImageSize, GenerationConfig, ChatMessage, GenerationResult, ImageTaskType } from './types';
-import { replaceBackground, generateOriginalProduct, generateRandomProductPrompt } from './geminiService';
+import { replaceBackground, generateOriginalProduct, generateRandomProductPrompt, recognizeProduct } from './geminiService';
 import { api } from './apiClient';
 import JSZip from 'jszip';
+
+const ALL_TASKS: { type: ImageTaskType; label: string; desc: string; icon: any }[] = [
+  { type: 'FRONT_HERO', label: '正面主图', desc: '全景呈现', icon: Camera },
+  { type: 'VIEW_SIDE', label: '侧翼轮廓', desc: '立体呈现', icon: MousePointer2 },
+  { type: 'VIEW_TOP', label: '俯视角', desc: '轮廓呈现', icon: ArrowDownCircle },
+  { type: 'DETAIL_MACRO', label: '极微距', desc: '触感呈现', icon: Focus },
+  { type: 'AD_POSTER', label: '英雄仰视角', desc: '张力呈现', icon: Trophy },
+  { type: 'AD_NEGATIVE', label: '黄金分割', desc: '商业留白', icon: ImageIcon },
+];
+
+const createComparisonImage = (originalUrl: string, generatedUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img1 = new Image();
+    const img2 = new Image();
+    img1.onload = () => {
+      img2.onload = () => {
+        const gap = 20;
+        const width = img1.width + img2.width + gap;
+        const height = Math.max(img1.height, img2.height);
+        canvas.width = width;
+        canvas.height = height;
+        if (ctx) {
+          ctx.fillStyle = '#0a0a0a';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img1, 0, 0);
+          ctx.drawImage(img2, img1.width + gap, 0);
+          ctx.font = 'bold 40px system-ui, sans-serif';
+          ctx.shadowColor = 'rgba(0,0,0,0.8)';
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.fillText('BEFORE', 30, 60);
+          ctx.fillStyle = '#6366f1';
+          ctx.fillText('AFTER', img1.width + gap + 30, 60);
+          resolve(canvas.toDataURL('image/jpeg', 0.92));
+        }
+      };
+      img2.src = generatedUrl;
+    };
+    img1.crossOrigin = 'anonymous';
+    img2.crossOrigin = 'anonymous';
+    img1.src = originalUrl;
+  });
+};
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -38,19 +86,24 @@ const App: React.FC = () => {
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0, label: '' });
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [isZippingComparison, setIsZippingComparison] = useState(false);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [previewImage, setPreviewImage] = useState<{url: string, label: string} | null>(null);
   
   const [config, setConfig] = useState<GenerationConfig>({
-    environment: EnvironmentType.DINING_ROOM,
-    style: SceneStyle.WINDOW_LIGHT,
+    environment: EnvironmentType.AUTO_ADAPT,
+    style: SceneStyle.AUTO_ADAPT,
     customPrompt: '',
     isPro: false,
     size: ImageSize.SIZE_1K,
     addReference: true,
     cleanProduct: true,
+    addHuman: false,
+    selectedTasks: ['FRONT_HERO', 'VIEW_SIDE', 'DETAIL_MACRO'],
     mode: 'UPLOAD',
     productPrompt: '一套极简主义风格的白色骨瓷茶具',
     plan: 'BASIC'
@@ -62,16 +115,42 @@ const App: React.FC = () => {
   const [isChatting, setIsChatting] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const recognizeProductFromImage = async (base64: string) => {
+    setIsRecognizing(true);
+    try {
+      const name = await recognizeProduct(base64);
+      if (name) setConfig(prev => ({ ...prev, productPrompt: name }));
+    } catch (e) {
+      console.error('识别失败:', e);
+    } finally {
+      setIsRecognizing(false);
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        setSelectedFile(event.target?.result as string);
+        const base64 = event.target?.result as string;
+        setSelectedFile(base64);
         setResult(null);
+        recognizeProductFromImage(base64);
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const toggleTask = (type: ImageTaskType) => {
+    setConfig(prev => {
+      const isSelected = prev.selectedTasks.includes(type);
+      return {
+        ...prev,
+        selectedTasks: isSelected
+          ? prev.selectedTasks.filter(t => t !== type)
+          : [...prev.selectedTasks, type]
+      };
+    });
   };
 
   const handleRandomPrompt = async () => {
@@ -87,10 +166,16 @@ const App: React.FC = () => {
   };
 
   const handleGenerate = async () => {
+    if (config.selectedTasks.length === 0) {
+      alert("请至少选择一个视角");
+      return;
+    }
     setIsProcessing(true);
+    setProcessingProgress({ current: 0, total: config.selectedTasks.length, label: '准备中...' });
     try {
       let baseImage = selectedFile;
       if (config.mode === 'AI_GEN') {
+        setProcessingProgress(prev => ({ ...prev, label: '正在生成 AI 原型...' }));
         baseImage = await generateOriginalProduct(config.productPrompt, config.size, config.isPro);
         setSelectedFile(baseImage);
       }
@@ -100,23 +185,17 @@ const App: React.FC = () => {
         return;
       }
 
-      const tasks: { type: ImageTaskType; label: string; desc: string }[] = config.plan === 'BASIC' 
-        ? [
-            { type: 'FRONT_HERO', label: '正面视窗', desc: '标准展示' },
-            { type: 'VIEW_SIDE', label: '侧翼轮廓', desc: '深度展示' },
-            { type: 'DETAIL_MACRO', label: '微距指纹', desc: '材质展示' }
-          ]
-        : [
-            { type: 'FRONT_HERO', label: '正视角 · 主', desc: '全景呈现' },
-            { type: 'VIEW_TOP', label: '俯视角 · 顶', desc: '轮廓呈现' },
-            { type: 'VIEW_SIDE', label: '45°侧视角', desc: '立体呈现' },
-            { type: 'DETAIL_MACRO', label: '极微距 · 质', desc: '触感呈现' },
-            { type: 'AD_POSTER', label: '英雄仰视角', desc: '张力呈现' },
-            { type: 'AD_NEGATIVE', label: '黄金分割视角', desc: '商业留白' }
-          ];
+      const tasksToRun = ALL_TASKS.filter(t => config.selectedTasks.includes(t.type));
+      const generatedImages: { url: string; type: ImageTaskType; label: string; description: string }[] = [];
 
-      const promises = tasks.map(task => 
-        replaceBackground(
+      for (let i = 0; i < tasksToRun.length; i++) {
+        const task = tasksToRun[i];
+        setProcessingProgress({ current: i + 1, total: tasksToRun.length, label: `正在生成: ${task.label}` });
+        if (i > 0) {
+          const delay = config.isPro ? 2500 : 800;
+          await new Promise(r => setTimeout(r, delay));
+        }
+        const url = await replaceBackground(
           baseImage!,
           config.environment,
           config.style,
@@ -125,11 +204,16 @@ const App: React.FC = () => {
           config.isPro,
           config.size,
           config.addReference,
-          config.cleanProduct
-        ).then(url => ({ url, type: task.type, label: task.label, description: task.desc }))
-      );
-
-      const generatedImages = await Promise.all(promises);
+          config.cleanProduct,
+          config.addHuman
+        );
+        generatedImages.push({
+          url,
+          type: task.type,
+          label: task.label,
+          description: config.addHuman ? '含人物交互场景' : task.desc
+        });
+      }
 
       setResult({
         originalUrl: baseImage,
@@ -144,35 +228,33 @@ const App: React.FC = () => {
     }
   };
 
+  const base64ToBlob = (base64: string) => {
+    const parts = base64.split(';base64,');
+    const contentType = parts[0].split(':')[1];
+    const raw = window.atob(parts[1]);
+    const uInt8Array = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; ++i) uInt8Array[i] = raw.charCodeAt(i);
+    return new Blob([uInt8Array], { type: contentType });
+  };
+
+  const getSafeFileName = (suffix: string) => {
+    const baseName = config.productPrompt || '未命名产品';
+    const safeName = baseName.slice(0, 20).trim().replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_');
+    return `${safeName}_${suffix}`;
+  };
+
   const downloadAllAsZip = async () => {
     if (!result) return;
     setIsZipping(true);
     try {
       const zip = new JSZip();
-      const folderName = `StudioPro_Assets_${result.id}`;
+      const folderName = getSafeFileName('精修包');
       const folder = zip.folder(folderName);
-
       if (!folder) throw new Error("Could not create folder in ZIP");
-
-      // Helper to convert base64 to blob
-      const base64ToBlob = (base64: string) => {
-        const parts = base64.split(';base64,');
-        const contentType = parts[0].split(':')[1];
-        const raw = window.atob(parts[1]);
-        const uInt8Array = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; ++i) uInt8Array[i] = raw.charCodeAt(i);
-        return new Blob([uInt8Array], { type: contentType });
-      };
-
-      // 1. Original
-      folder.file("00_Original_Input.png", base64ToBlob(result.originalUrl));
-
-      // 2. Generated Results
+      folder.file("00_原始图.png", base64ToBlob(result.originalUrl));
       result.results.forEach((res, index) => {
-        const fileName = `${(index + 1).toString().padStart(2, '0')}_${res.type}_${res.label}.png`;
-        folder.file(fileName, base64ToBlob(res.url));
+        folder.file(`${(index + 1).toString().padStart(2, '0')}_${res.label}.png`, base64ToBlob(res.url));
       });
-
       const content = await zip.generateAsync({ type: "blob" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(content);
@@ -183,6 +265,32 @@ const App: React.FC = () => {
       alert("打包失败，请重试");
     } finally {
       setIsZipping(false);
+    }
+  };
+
+  const downloadAllComparisonsAsZip = async () => {
+    if (!result) return;
+    setIsZippingComparison(true);
+    try {
+      const zip = new JSZip();
+      const folderName = getSafeFileName('对比包');
+      const folder = zip.folder(folderName);
+      if (!folder) throw new Error("Could not create folder in ZIP");
+      const promises = result.results.map(async (res, i) => {
+        const comp = await createComparisonImage(result.originalUrl, res.url);
+        folder.file(`${(i + 1).toString().padStart(2, '0')}_${res.label}_对比.jpg`, base64ToBlob(comp));
+      });
+      await Promise.all(promises);
+      const content = await zip.generateAsync({ type: "blob" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(content);
+      link.download = `${folderName}.zip`;
+      link.click();
+    } catch (error) {
+      console.error("对比包打包失败:", error);
+      alert("打包失败，请重试");
+    } finally {
+      setIsZippingComparison(false);
     }
   };
 
@@ -288,11 +396,11 @@ const App: React.FC = () => {
 
         <section className="bg-white/5 p-1 rounded-2xl flex gap-1">
           <button 
-            onClick={() => setConfig({...config, plan: 'BASIC'})}
+            onClick={() => setConfig({...config, plan: 'BASIC', selectedTasks: ['FRONT_HERO', 'VIEW_SIDE', 'DETAIL_MACRO']})}
             className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${config.plan === 'BASIC' ? 'bg-indigo-600 text-white shadow-lg' : 'text-white/40 hover:text-white/60'}`}
           >标准 2+1</button>
           <button 
-            onClick={() => setConfig({...config, plan: 'PRO_SET'})}
+            onClick={() => setConfig({...config, plan: 'PRO_SET', selectedTasks: ['FRONT_HERO', 'VIEW_SIDE', 'VIEW_TOP', 'DETAIL_MACRO', 'AD_POSTER', 'AD_NEGATIVE']})}
             className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${config.plan === 'PRO_SET' ? 'bg-indigo-600 text-white shadow-lg' : 'text-white/40 hover:text-white/60'}`}
           >专业 6 视角</button>
         </section>
@@ -307,6 +415,23 @@ const App: React.FC = () => {
             className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition-all ${config.mode === 'AI_GEN' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'}`}
           >AI 创作</button>
         </section>
+
+        <div className="space-y-3">
+          <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">视角库 (自由勾选)</label>
+          <div className="grid grid-cols-3 gap-2">
+            {ALL_TASKS.map(task => (
+              <button
+                key={task.type}
+                onClick={() => toggleTask(task.type)}
+                className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl border transition-all ${config.selectedTasks.includes(task.type) ? 'bg-indigo-600/10 border-indigo-500/50 text-white' : 'bg-white/[0.02] border-white/5 text-white/30'}`}
+              >
+                <task.icon className={`w-4 h-4 ${config.selectedTasks.includes(task.type) ? 'text-indigo-400' : ''}`} />
+                <span className="text-[9px] font-bold">{task.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-white/30 ml-1">{config.selectedTasks.length} 个已选</p>
+        </div>
 
         <div className="space-y-2">
           <label className="text-[10px] font-black text-white/40 uppercase tracking-widest ml-1">高保真渲染控制</label>
@@ -326,6 +451,13 @@ const App: React.FC = () => {
                {config.addReference ? <Check className="w-3 h-3" /> : <Box className="w-3 h-3 opacity-20" />}
              </button>
           </div>
+          <button 
+            onClick={() => setConfig({...config, addHuman: !config.addHuman})}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-[11px] font-bold border transition-all ${config.addHuman ? 'bg-indigo-600/10 border-indigo-500/50 text-indigo-400' : 'bg-white/[0.02] border-white/5 text-white/30'}`}
+          >
+            人物介入 (Lifestyle)
+            {config.addHuman ? <Check className="w-3 h-3" /> : <UserPlus className="w-3 h-3 opacity-20" />}
+          </button>
         </div>
 
         <section className="bg-indigo-600/10 border border-indigo-500/20 p-4 rounded-2xl space-y-3">
@@ -350,6 +482,12 @@ const App: React.FC = () => {
                 <img src={selectedFile} alt="Preview" className="w-full h-full object-contain p-4" />
               ) : (
                 <div className="text-center p-6"><Upload className="w-8 h-8 text-white/20 mx-auto mb-2" /></div>
+              )}
+              {isRecognizing && (
+                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mb-2" />
+                  <span className="text-[10px] font-bold">识别产品中...</span>
+                </div>
               )}
               <input type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" />
             </div>
@@ -400,10 +538,10 @@ const App: React.FC = () => {
 
         <button 
           onClick={handleGenerate}
-          disabled={isProcessing}
-          className={`w-full py-5 rounded-3xl font-bold text-sm flex items-center justify-center gap-3 transition-all ${isProcessing ? 'bg-white/5 text-white/20' : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-600/30 hover:scale-[1.02] shadow-xl active:scale-[0.98]'}`}
+          disabled={isProcessing || config.selectedTasks.length === 0}
+          className={`w-full py-5 rounded-3xl font-bold text-sm flex flex-col items-center justify-center gap-1 transition-all ${isProcessing || config.selectedTasks.length === 0 ? 'bg-white/5 text-white/20' : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:shadow-indigo-600/30 hover:scale-[1.02] shadow-xl active:scale-[0.98]'}`}
         >
-          {isProcessing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <><Compass className="w-4 h-4" /> 生成多维视角</>}
+          {isProcessing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <><Compass className="w-4 h-4" /> 开始生成 {config.selectedTasks.length} 个视角</>}
         </button>
       </aside>
 
@@ -418,12 +556,14 @@ const App: React.FC = () => {
         {isProcessing && (
           <div className="h-full flex flex-col items-center justify-center space-y-8 animate-in fade-in">
              <div className="relative">
-                <div className="w-24 h-24 border-2 border-indigo-500/20 rounded-full animate-ping" />
-                <Compass className="w-8 h-8 text-indigo-500 absolute inset-0 m-auto animate-spin-slow" />
+                <div className="w-24 h-24 border-t-2 border-indigo-500 rounded-full animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-indigo-400">
+                  {processingProgress.total ? Math.round((processingProgress.current / processingProgress.total) * 100) : 0}%
+                </div>
              </div>
-             <div className="text-center space-y-3">
-                <p className="text-sm text-white/70 font-bold tracking-widest uppercase">执行 {config.plan === 'PRO_SET' ? '全视角 (6张)' : '标准视角 (3张)'} 变换任务...</p>
-                <p className="text-[10px] text-white/20 uppercase tracking-widest">物理视角重算 · DNA 注入</p>
+             <div className="text-center space-y-2">
+                <p className="text-sm text-white/70 font-bold tracking-widest uppercase animate-pulse">{processingProgress.label}</p>
+                <p className="text-[10px] text-white/20 uppercase tracking-widest">正在处理第 {processingProgress.current} / {processingProgress.total} 个视角</p>
              </div>
           </div>
         )}
@@ -438,19 +578,29 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-2 text-indigo-400 mb-1">
                   <Trophy className="w-4 h-4" />
                   <span className="text-xs font-bold uppercase tracking-wider">
-                    {config.plan === 'PRO_SET' ? '专业 6 视角全家桶已就绪' : '三维核心视角已生成'}
+                    {config.selectedTasks.length} 视角 · {config.addHuman ? '含人物交互' : '纯净展示'}
                   </span>
                 </div>
                 <h2 className="text-xl font-bold">已同步环境 DNA 与 空间视角指纹</h2>
               </div>
-              <button 
-                onClick={downloadAllAsZip}
-                disabled={isZipping}
-                className="px-6 py-3 bg-white/5 border border-white/10 rounded-2xl flex items-center gap-3 text-xs font-bold hover:bg-white/10 transition-all active:scale-95 disabled:opacity-50"
-              >
-                {isZipping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
-                一键打包下载
-              </button>
+              <div className="flex gap-3">
+                <button 
+                  onClick={downloadAllAsZip}
+                  disabled={isZipping}
+                  className="px-6 py-3 bg-white/5 border border-white/10 rounded-2xl flex items-center gap-3 text-xs font-bold hover:bg-white/10 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isZipping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                  精修包
+                </button>
+                <button 
+                  onClick={downloadAllComparisonsAsZip}
+                  disabled={isZippingComparison}
+                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-2xl flex items-center gap-3 text-xs font-bold transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isZippingComparison ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Columns className="w-4 h-4" />}
+                  对比包
+                </button>
+              </div>
             </section>
 
             <section className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6`}>

@@ -21,6 +21,7 @@ const STRICT_PROTOCOL = `
 `;
 
 const ENV_PROMPTS: Record<string, string> = {
+  "智能适配 (推荐)": "a contextually appropriate high-end environment that best complements the product",
   潮州牌坊街: "the historic Chaoshan Paifang Street with traditional stone arches and vintage Lingnan architecture",
   滨江长廊: "the scenic Chaoshan Binjiang Promenade by the river with ancient city walls and banyan trees",
   凤凰天池: "the misty Phoenix Heaven Lake (Fenghuang Tianchi) mountain top surrounded by high-altitude tea plantations and soft clouds",
@@ -36,6 +37,7 @@ const ENV_PROMPTS: Record<string, string> = {
 };
 
 const STYLE_PROMPTS: Record<string, string> = {
+  "智能适配 (推荐)": "Natural commercial lighting, photorealistic textures, neutral aesthetic.",
   现代奢华: "Premium luxury, marble, gold accents, clean sharp lighting.",
   禅意极简: "Peaceful, organic textures, wood, stone, diffused lighting.",
   "C4D 3D渲染": "Avant-garde 3D render style, abstract shapes, soft pastel colors.",
@@ -112,6 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       size = "1K",
       addReference = false,
       cleanProduct = false,
+      addHuman = false,
     } = req.body || {};
 
     if (!base64Image) {
@@ -123,6 +126,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const refCmd = addReference && envWeight !== "LOW"
       ? "SCALE: Add a subtle blurry household object for size comparison."
       : "";
+    const humanCmd = addHuman
+      ? "HUMAN LIFESTYLE: Integrate a natural human presence or organic interaction in a candid, lifestyle manner. Avoid stiff posing. A person may be partially visible, in soft focus background, or naturally engaging with the context. The product MUST remain the clear focal point and not be obscured."
+      : "";
 
     const envStr = envWeight !== "LOW" ? `ENVIRONMENT: In ${ENV_PROMPTS[environment] || ENV_PROMPTS["家庭餐厅"]}.` : "";
     const styleStr = STYLE_PROMPTS[style] || STYLE_PROMPTS["自然窗光"];
@@ -132,6 +138,7 @@ ${STRICT_PROTOCOL}
 ${instruction}
 ${envStr}
 VISUAL STYLE: ${styleStr}
+${humanCmd}
 ${cleanCmd}
 ${refCmd}
 ${customPrompt ? `EXTRA_DETAIL: ${customPrompt}` : ""}
@@ -142,25 +149,38 @@ PHOTOGRAPHY: Photorealistic, 8k, sharp focus on product.
 
     const ai = getAIClient();
     const modelName = isPro ? "gemini-3-pro-image-preview" : "gemini-2.5-flash-image";
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: [
-        {
-          parts: [
-            { inlineData: { mimeType: "image/jpeg", data } },
-            { text: finalPrompt },
-          ],
-        },
-      ],
-      config: isPro ? { imageConfig: { aspectRatio: "1:1", imageSize: size } } : undefined,
-    });
 
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    const part = parts.find((p: any) => p.inlineData?.data);
-    if (!part?.inlineData?.data) {
-      throw new Error("AI未能生成图像");
+    const maxRetries = 2;
+    let lastError: any;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [
+            {
+              parts: [
+                { inlineData: { mimeType: "image/jpeg", data } },
+                { text: finalPrompt },
+              ],
+            },
+          ],
+          config: isPro ? { imageConfig: { aspectRatio: "1:1", imageSize: size } } : undefined,
+        });
+
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        const part = parts.find((p: any) => p.inlineData?.data);
+        if (!part?.inlineData?.data) {
+          throw new Error("AI未能生成图像");
+        }
+        return res.status(200).json({ image: `data:image/png;base64,${part.inlineData.data}` });
+      } catch (error: any) {
+        lastError = error;
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+        }
+      }
     }
-    return res.status(200).json({ image: `data:image/png;base64,${part.inlineData.data}` });
+    throw lastError;
   } catch (err: any) {
     console.error("replace-background error:", err);
     const msg = err?.message || "生成失败";

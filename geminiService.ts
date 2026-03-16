@@ -4,6 +4,11 @@
 import { api } from "./apiClient";
 import { SceneStyle, EnvironmentType, ImageSize, ImageTaskType } from "./types";
 
+export const recognizeProduct = async (base64Image: string): Promise<string> => {
+  const { productName } = await api.recognizeProduct(base64Image);
+  return productName;
+};
+
 export const generateRandomProductPrompt = async (): Promise<string> => {
   const { prompt } = await api.randomPrompt();
   return prompt;
@@ -31,7 +36,8 @@ export const replaceBackground = async (
   isPro: boolean = false,
   size: ImageSize = ImageSize.SIZE_1K,
   addReference: boolean = false,
-  cleanProduct: boolean = false
+  cleanProduct: boolean = false,
+  addHuman: boolean = false
 ): Promise<string> => {
   const { image } = await api.replaceBackground({
     base64Image,
@@ -43,6 +49,7 @@ export const replaceBackground = async (
     size,
     addReference,
     cleanProduct,
+    addHuman,
   });
   return image;
 };
